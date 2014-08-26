@@ -9,8 +9,7 @@ import logging
 import threading
 import time
 import requests
-import sys
-from daemon import Daemon
+from daemon import runner
 
 __author__ = 'gino'
 
@@ -40,9 +39,11 @@ class MyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html;charset=GBK")
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
+            self.wfile.write(time.asctime())
             self.wfile.write(DATA.encode('GBK'))
         else:
             # self.send_response(404)
+            print(self.client_address)
             logging.basicConfig(filename='deny.log', format='%(asctime)s - %(levelname)s - %(message)s')
             logging.warning('%s is denied' % self.client_address[0])
 
@@ -63,23 +64,33 @@ def get_data_from_main():
 def init_config():
     global HOST, PORT, LOGIN_PARAMS, MAIN_URL, MAIN_SEC, ACL
     config = ConfigParser.ConfigParser()
-    config.read('./config.ini')
+    config.read('/home/gino/Workspace/lpfws/config.ini')
 
-    # Server config
-    HOST = config.get('Server', 'HOST')
-    PORT = int(config.get('Server', 'PORT'))
+    try:
+        # Server config
+        HOST = config.get('Server', 'HOST')
+        PORT = int(config.get('Server', 'PORT'))
 
-    # MAIN config
-    MAIN_URL = config.get('MAIN', 'URL')
-    LOGIN_PARAMS['username'] = config.get('MAIN', 'USERNAME')
-    LOGIN_PARAMS['password'] = config.get('MAIN', 'PASSWORD')
-    MAIN_SEC = float(config.get('MAIN', 'SEC'))
+        # MAIN config
+        MAIN_URL = config.get('MAIN', 'URL')
+        LOGIN_PARAMS['username'] = config.get('MAIN', 'USERNAME')
+        LOGIN_PARAMS['password'] = config.get('MAIN', 'PASSWORD')
+        MAIN_SEC = float(config.get('MAIN', 'SEC'))
 
-    # ACL config
-    ACL = tuple(config.get('ACL', 'WLIST').split(','))
+        # ACL config
+        ACL = tuple(config.get('ACL', 'WLIST').split(','))
+    except Exception as e:
+        print(e.message)
 
 
-class MyDaemon(Daemon):
+class App():
+    def __init__(self):
+        self.stdin_path = '/dev/null'
+        self.stdout_path = '/dev/tty'
+        self.stderr_path = '/dev/tty'
+        self.pidfile_path = '/tmp/testdaemon.pid'
+        self.pidfile_timeout = 5
+
     def run(self):
         # initial server
         init_config()
@@ -100,18 +111,15 @@ class MyDaemon(Daemon):
 
 
 if __name__ == '__main__':
-    daemon = MyDaemon('/tmp/forwardserver.pid')
-    if len(sys.argv) == 2:
-        if 'start' == sys.argv[1]:
-            daemon.start()
-        elif 'stop' == sys.argv[1]:
-            daemon.stop()
-        elif 'restart' == sys.argv[1]:
-            daemon.restart()
-        else:
-            print "Unknown command"
-            sys.exit(2)
-        sys.exit(0)
-    else:
-        print "usage: %s start|stop|restart" % sys.argv[0]
-        sys.exit(2)
+    app = App()
+    logger = logging.getLogger("DaemonLog")
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    handler = logging.FileHandler("/home/gino/Workspace/lpfws/testdaemon.log")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+    daemon_runner = runner.DaemonRunner(app)
+    # This ensures that the logger file handle does not get closed during daemonization
+    daemon_runner.daemon_context.files_preserve = [handler.stream]
+    daemon_runner.do_action()
