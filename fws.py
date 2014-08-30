@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
+from SocketServer import ThreadingMixIn, BaseRequestHandler
 import BaseHTTPServer
 import ConfigParser
-from SocketServer import ThreadingMixIn, BaseRequestHandler
 import logging
 import logging.handlers
 import threading
@@ -39,6 +39,7 @@ class ForwardHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     def do_GET(self):
         """Respond to a GET request."""
         global DATA
+        # parse parameters from GET request
         tmp = urlparse.urlparse(self.path)
         auth = urlparse.parse_qs(tmp.query)
         for key in auth.keys():
