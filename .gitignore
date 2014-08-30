@@ -53,4 +53,6 @@ coverage.xml
 docs/_build/
 
 .idea/
+temp/
+*.log.*
 
