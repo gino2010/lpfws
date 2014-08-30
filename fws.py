@@ -11,6 +11,7 @@ import threading
 import time
 
 import requests
+import sys
 
 
 __author__ = 'gino'
@@ -24,6 +25,7 @@ ACL = ()
 REPEAT = True
 # For testing
 DATA = ''
+DEBUG = True
 
 
 # Multithreading
@@ -32,7 +34,7 @@ class ThreadedHTTPServer(ThreadingMixIn, BaseHTTPServer.HTTPServer):
 
 
 # Handler
-class MyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
+class ForwardHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     def do_GET(self):
         """Respond to a GET request."""
         global DATA, ACL
@@ -42,25 +44,9 @@ class MyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
             self.wfile.write(DATA.encode('GBK'))
-            my_logger.warning('from ip: %s request' % self.client_address[0])
+            run_logger.warning('from ip: %s request' % self.client_address[0])
         else:
-            # self.send_response(404)
-            # print(self.client_address)
-            my_logger.warning('%s is denied' % self.client_address[0])
-
-            # message = threading.currentThread().getName()
-            # print(message)
-
-
-def get_data_from_main():
-    global MAIN_URL, LOGIN_PARAMS, MAIN_SEC, DATA, REPEAT
-    try:
-        req = requests.get(MAIN_URL, params=LOGIN_PARAMS)
-        DATA = req.text
-    except Exception:
-        print('timeout')
-    print(time.asctime())
-    threading.Timer(MAIN_SEC, get_data_from_main).start()
+            run_logger.warning('%s is denied' % self.client_address[0])
 
 
 # initial server config parameter
@@ -83,10 +69,13 @@ def init_config():
         # ACL config
         ACL = tuple(config.get('ACL', 'WLIST').split(','))
     except Exception as e:
-        my_logger.warning(e.message)
+        run_logger.error('Initialize configuration failure!')
+        run_logger.error(e.message)
+        sys.exit(0)
 
 
-class MyThread(threading.Thread):
+# Request thread to get data from remote server
+class RequestThread(threading.Thread):
     def __init__(self, main_url, login_params, main_sec):
         threading.Thread.__init__(self)
         self._main_url = main_url
@@ -101,8 +90,9 @@ class MyThread(threading.Thread):
                 req = requests.get(self._main_url, params=self._login_params, timeout=0.3)
                 DATA = req.text
             except Exception:
-                print('timeout')
-            print(time.asctime())
+                logging.warning('request timeout')
+            if DEBUG:
+                print(time.asctime())
             time.sleep(self._main_sec)
 
     def stop(self):
@@ -110,30 +100,33 @@ class MyThread(threading.Thread):
 
 
 if __name__ == '__main__':
-    # initial server
-    init_config()
-    # This function will start a new thread via Timer module
-    # get_data_from_main()
-    thread = MyThread(MAIN_URL, LOGIN_PARAMS, MAIN_SEC)
-    thread.start()
-
-    # logging.basicConfig(filename='fws%s.log' % str(datetime.date.today()), format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
-    my_logger = logging.getLogger("requests.packages.urllib3")
-    my_logger.setLevel(logging.INFO)
+    # configure logging, handler request package logging
+    run_logger = logging.getLogger("requests.packages.urllib3")
+    run_logger.setLevel(logging.INFO)
+    # rorate file by midnight
     handler = logging.handlers.TimedRotatingFileHandler('run.log', when="midnight", backupCount=5)
     handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    my_logger.addHandler(handler)
-    my_logger.info('initial config success')
+    run_logger.addHandler(handler)
 
-    # Start a http server
-    MyHandler.server_version = 'Light Forwarding Server/1.0'
-    MyHandler.sys_version = ''
-    httpd = ThreadedHTTPServer((HOST, PORT), MyHandler)
-    my_logger.info("Server Starts - %s:%s" % (HOST, PORT))
+    # initialize server configuration
+    init_config()
+    run_logger.info('initial config success')
+
+    # start to request remote server for getting forwarding data
+    thread = RequestThread(MAIN_URL, LOGIN_PARAMS, MAIN_SEC)
+    thread.start()
+
+    # Start http server
+    ForwardHandler.server_version = 'Light Forwarding Server/1.0'
+    ForwardHandler.sys_version = ''
+    httpd = ThreadedHTTPServer((HOST, PORT), ForwardHandler)
+    run_logger.info("Server Starts - %s:%s" % (HOST, PORT))
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
+
+    # Stop http server
     httpd.server_close()
     thread.stop()
-    my_logger.info("Server Stops - %s:%s" % (HOST, PORT))
+    run_logger.info("Server Stops - %s:%s" % (HOST, PORT))
