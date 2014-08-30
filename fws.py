@@ -1,11 +1,8 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
-# python ./fws.pyc >/dev/null 2>&1 &
-# nohup /path/to/test.py &
-# netstat -lptun | grep 61980
 import BaseHTTPServer
 import ConfigParser
-from SocketServer import ThreadingMixIn
+from SocketServer import ThreadingMixIn, BaseRequestHandler
 import logging
 import logging.handlers
 import threading
@@ -19,17 +16,17 @@ from daemon import Daemon
 
 __author__ = 'gino'
 
-HOST = ''
-PORT = 0
-LOGIN_PARAMS = {}
-MAIN_URL = ''
-MAIN_SEC = 0.5
-WACL = ()
-BACL = ()
-REPEAT = True
+# HOST = ''
+# PORT = 0
+# LOGIN_PARAMS = {}
+# REMOTE_URL = ''
+# REMOTE_SEC = 0.5
+# WACL = ()
+# BACL = ()
 # For testing
 DATA = ''
-DEBUG = True
+DEBUG = False
+
 
 # Multithreading
 class ThreadedHTTPServer(ThreadingMixIn, BaseHTTPServer.HTTPServer):
@@ -38,10 +35,15 @@ class ThreadedHTTPServer(ThreadingMixIn, BaseHTTPServer.HTTPServer):
 
 # Handler
 class ForwardHandler(BaseHTTPServer.BaseHTTPRequestHandler):
+    def __init__(self, ct, *args):
+        self.wacl = ct.wacl
+        self.bacl = ct.bacl
+        BaseRequestHandler.__init__(self, *args)
+
     def do_GET(self):
         """Respond to a GET request."""
-        global DATA, WACL
-        if self.client_address[0] in WACL:
+        global DATA
+        if self.client_address[0] in self.wacl and self.client_address[0] not in self.bacl:
             self.send_response(200)
             self.send_header("Content-Type", "text/html;charset=GBK")
             self.send_header("Transfer-Encoding", "chunked")
@@ -52,51 +54,76 @@ class ForwardHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             run_logger.warning('%s is denied' % self.client_address[0])
 
 
+def handleRequestsUsing(ct):
+    return lambda *args: ForwardHandler(ct, *args)
+
+
 # initial server config parameter
-def init_config():
-    global HOST, PORT, LOGIN_PARAMS, MAIN_URL, MAIN_SEC, WACL
-    config = ConfigParser.ConfigParser()
-    config.read('config.ini')
+class ConfigThread(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+        self._stop_flag = False
+        self._config = ConfigParser.ConfigParser()
+        self._config.read('config.ini')
+        try:
+            # Server config
+            self.host = self._config.get('Server', 'HOST')
+            self.port = int(self._config.get('Server', 'PORT'))
 
-    try:
-        # Server config
-        HOST = config.get('Server', 'HOST')
-        PORT = int(config.get('Server', 'PORT'))
+            # REMOTE config
+            self.remote_url = self._config.get('Remote', 'URL')
+            self.lp = dict()
+            self.lp['username'] = self._config.get('Remote', 'USERNAME')
+            self.lp['password'] = self._config.get('Remote', 'PASSWORD')
+            self.remote_sec = float(self._config.get('Remote', 'SEC'))
 
-        # MAIN config
-        MAIN_URL = config.get('MAIN', 'URL')
-        LOGIN_PARAMS['username'] = config.get('MAIN', 'USERNAME')
-        LOGIN_PARAMS['password'] = config.get('MAIN', 'PASSWORD')
-        MAIN_SEC = float(config.get('MAIN', 'SEC'))
+            # ACL config
+            self.wacl = tuple(self._config.get('ACL', 'WLIST').split(','))
+            self.bacl = tuple(self._config.get('ACL', 'BLIST').split(','))
+        except Exception as e:
+            if DEBUG:
+                print('Initialize configuration failure: %s' % e.message)
+            run_logger.error('Initialize configuration failure!')
+            run_logger.error(e.message)
+            sys.exit(0)
 
-        # ACL config
-        WACL = tuple(config.get('ACL', 'WLIST').split(','))
-    except Exception as e:
-        run_logger.error('Initialize configuration failure!')
-        run_logger.error(e.message)
-        sys.exit(0)
+    def run(self):
+        while not self._stop_flag:
+            try:
+                self._config.read('config.ini')
+                self.wacl = tuple(self._config.get('ACL', 'WLIST').split(','))
+                self.bacl = tuple(self._config.get('ACL', 'BLIST').split(','))
+            except Exception as e:
+                if DEBUG:
+                    print('Reload acl failure: %s' % e.message)
+                run_logger.error('Reload acl failure!')
+                run_logger.error(e.message)
+            time.sleep(10)
+
+    def stop(self):
+        self._stop_flag = True
 
 
 # Request thread to get data from remote server
 class RequestThread(threading.Thread):
-    def __init__(self, main_url, login_params, main_sec):
+    def __init__(self, ct):
         threading.Thread.__init__(self)
-        self._main_url = main_url
-        self._login_params = login_params
-        self._main_sec = main_sec
+        self._remote_url = ct.remote_url
+        self._lp = ct.lp
+        self._remote_sec = ct.remote_sec
         self._stop_flag = False
 
     def run(self):
         global DATA
         while not self._stop_flag:
             try:
-                req = requests.get(self._main_url, params=self._login_params, timeout=0.3)
+                req = requests.get(self._remote_url, params=self._lp, timeout=0.3)
                 DATA = req.text
             except Exception:
                 logging.warning('request timeout')
             if DEBUG:
                 print(time.asctime())
-            time.sleep(self._main_sec)
+            time.sleep(self._remote_sec)
 
     def stop(self):
         self._stop_flag = True
@@ -106,35 +133,40 @@ class ServerDaemon(Daemon):
     def run(self):
         # Do stuff
         # initialize server configuration
-        init_config()
+        # init_config()
+        ct = ConfigThread()
+        ct.start()
         run_logger.info('initial config success')
 
         # start to request remote server for getting forwarding data
-        rt = RequestThread(MAIN_URL, LOGIN_PARAMS, MAIN_SEC)
+        rt = RequestThread(ct)
         rt.start()
 
         # Start http server
         ForwardHandler.server_version = 'Light Forwarding Server/1.0'
         ForwardHandler.sys_version = ''
-        httpd = ThreadedHTTPServer((HOST, PORT), ForwardHandler)
-        run_logger.info("Server Starts - %s:%s" % (HOST, PORT))
+        fh = handleRequestsUsing(ct)
+        httpd = ThreadedHTTPServer((ct.host, ct.port), fh)
+        run_logger.info("Server Starts - %s:%s" % (ct.host, ct.port))
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
             pass
 
-        # Stop http server
+        # Stop http server only in debug mode
         httpd.server_close()
         rt.stop()
-        run_logger.info("Server Stops - %s:%s" % (HOST, PORT))
+        ct.stop()
+        run_logger.info("Server Stops - %s:%s" % (ct.host, ct.host))
 
 
 if __name__ == '__main__':
     # only init LOG and PID
-    config = ConfigParser.ConfigParser()
-    config.read('config.ini')
-    LOG = config.get('LOG', 'PATH')
-    PID = config.get('PID', 'PATH')
+    oc = ConfigParser.ConfigParser()
+    oc.read('config.ini')
+    LOG = oc.get('LOG', 'PATH')
+    PID = oc.get('PID', 'PATH')
+    DEBUG = bool(oc.get('Server', 'DEBUG') == '1')
 
     # configure logging, handler request package logging
     run_logger = logging.getLogger("requests.packages.urllib3")
@@ -149,7 +181,10 @@ if __name__ == '__main__':
     sd = ServerDaemon(PID)
     if len(sys.argv) == 2:
         if 'start' == sys.argv[1]:
-            sd.start()
+            if DEBUG:
+                sd.run()
+            else:
+                sd.start()
         elif 'stop' == sys.argv[1]:
             sd.stop()
         elif 'restart' == sys.argv[1]:
