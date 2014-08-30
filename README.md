@@ -7,11 +7,11 @@ Light Python Forwarding Web Server
 
 Features
 ---------
-1. Base http sever and ThreadingMixIn
+1. Base http sever and ThreadingMixIn, support user authentication
 2. Use requests to get data
-3. Access control list: white and black
+3. Access control list: white and black, automatic reload in absolute thread
 4. Configuration in config.ini
-5. Logging
+5. Logging, rotate file every midnight
 6. Daemonizer base on https://github.com/serverdensity/python-daemon
 
 License

@@ -180,7 +180,7 @@ if __name__ == '__main__':
     run_logger = logging.getLogger("requests.packages.urllib3")
     run_logger.setLevel(logging.INFO)
 
-    # rorate file by midnight
+    # rotate file every midnight
     handler = logging.handlers.TimedRotatingFileHandler(LOG, when="midnight", backupCount=5)
     handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     run_logger.addHandler(handler)
