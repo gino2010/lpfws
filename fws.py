@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
 # python ./fws.pyc >/dev/null 2>&1 &
+# nohup /path/to/test.py &
 # netstat -lptun | grep 61980
 import BaseHTTPServer
 import ConfigParser
@@ -9,9 +10,11 @@ import logging
 import logging.handlers
 import threading
 import time
+import sys
 
 import requests
-import sys
+
+from daemon import Daemon
 
 
 __author__ = 'gino'
@@ -21,12 +24,12 @@ PORT = 0
 LOGIN_PARAMS = {}
 MAIN_URL = ''
 MAIN_SEC = 0.5
-ACL = ()
+WACL = ()
+BACL = ()
 REPEAT = True
 # For testing
 DATA = ''
 DEBUG = True
-
 
 # Multithreading
 class ThreadedHTTPServer(ThreadingMixIn, BaseHTTPServer.HTTPServer):
@@ -37,8 +40,8 @@ class ThreadedHTTPServer(ThreadingMixIn, BaseHTTPServer.HTTPServer):
 class ForwardHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     def do_GET(self):
         """Respond to a GET request."""
-        global DATA, ACL
-        if self.client_address[0] in ACL:
+        global DATA, WACL
+        if self.client_address[0] in WACL:
             self.send_response(200)
             self.send_header("Content-Type", "text/html;charset=GBK")
             self.send_header("Transfer-Encoding", "chunked")
@@ -51,7 +54,7 @@ class ForwardHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 
 # initial server config parameter
 def init_config():
-    global HOST, PORT, LOGIN_PARAMS, MAIN_URL, MAIN_SEC, ACL
+    global HOST, PORT, LOGIN_PARAMS, MAIN_URL, MAIN_SEC, WACL
     config = ConfigParser.ConfigParser()
     config.read('config.ini')
 
@@ -67,7 +70,7 @@ def init_config():
         MAIN_SEC = float(config.get('MAIN', 'SEC'))
 
         # ACL config
-        ACL = tuple(config.get('ACL', 'WLIST').split(','))
+        WACL = tuple(config.get('ACL', 'WLIST').split(','))
     except Exception as e:
         run_logger.error('Initialize configuration failure!')
         run_logger.error(e.message)
@@ -99,34 +102,62 @@ class RequestThread(threading.Thread):
         self._stop_flag = True
 
 
+class ServerDaemon(Daemon):
+    def run(self):
+        # Do stuff
+        # initialize server configuration
+        init_config()
+        run_logger.info('initial config success')
+
+        # start to request remote server for getting forwarding data
+        rt = RequestThread(MAIN_URL, LOGIN_PARAMS, MAIN_SEC)
+        rt.start()
+
+        # Start http server
+        ForwardHandler.server_version = 'Light Forwarding Server/1.0'
+        ForwardHandler.sys_version = ''
+        httpd = ThreadedHTTPServer((HOST, PORT), ForwardHandler)
+        run_logger.info("Server Starts - %s:%s" % (HOST, PORT))
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            pass
+
+        # Stop http server
+        httpd.server_close()
+        rt.stop()
+        run_logger.info("Server Stops - %s:%s" % (HOST, PORT))
+
+
 if __name__ == '__main__':
+    # only init LOG and PID
+    config = ConfigParser.ConfigParser()
+    config.read('config.ini')
+    LOG = config.get('LOG', 'PATH')
+    PID = config.get('PID', 'PATH')
+
     # configure logging, handler request package logging
     run_logger = logging.getLogger("requests.packages.urllib3")
     run_logger.setLevel(logging.INFO)
+
     # rorate file by midnight
-    handler = logging.handlers.TimedRotatingFileHandler('run.log', when="midnight", backupCount=5)
+    handler = logging.handlers.TimedRotatingFileHandler(LOG, when="midnight", backupCount=5)
     handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     run_logger.addHandler(handler)
 
-    # initialize server configuration
-    init_config()
-    run_logger.info('initial config success')
+    # start server in daemon mode
+    sd = ServerDaemon(PID)
+    if len(sys.argv) == 2:
+        if 'start' == sys.argv[1]:
+            sd.start()
+        elif 'stop' == sys.argv[1]:
+            sd.stop()
+        elif 'restart' == sys.argv[1]:
+            sd.restart()
+        else:
+            print ('Unknown command')
+    else:
+        print('Usage: start/stop/restart')
 
-    # start to request remote server for getting forwarding data
-    thread = RequestThread(MAIN_URL, LOGIN_PARAMS, MAIN_SEC)
-    thread.start()
-
-    # Start http server
-    ForwardHandler.server_version = 'Light Forwarding Server/1.0'
-    ForwardHandler.sys_version = ''
-    httpd = ThreadedHTTPServer((HOST, PORT), ForwardHandler)
-    run_logger.info("Server Starts - %s:%s" % (HOST, PORT))
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        pass
-
-    # Stop http server
-    httpd.server_close()
-    thread.stop()
-    run_logger.info("Server Stops - %s:%s" % (HOST, PORT))
+        # user auth
+        #auto acl
