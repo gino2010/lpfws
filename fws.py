@@ -8,6 +8,7 @@ import logging.handlers
 import threading
 import time
 import sys
+import urlparse
 
 import requests
 
@@ -16,15 +17,9 @@ from daemon import Daemon
 
 __author__ = 'gino'
 
-# HOST = ''
-# PORT = 0
-# LOGIN_PARAMS = {}
-# REMOTE_URL = ''
-# REMOTE_SEC = 0.5
-# WACL = ()
-# BACL = ()
-# For testing
+# Put data in memory
 DATA = ''
+# Debug flag
 DEBUG = False
 
 
@@ -33,17 +28,23 @@ class ThreadedHTTPServer(ThreadingMixIn, BaseHTTPServer.HTTPServer):
     pass
 
 
-# Handler
+# Forward Handler
 class ForwardHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     def __init__(self, ct, *args):
         self.wacl = ct.wacl
         self.bacl = ct.bacl
+        self.auth = ct.auth
         BaseRequestHandler.__init__(self, *args)
 
     def do_GET(self):
         """Respond to a GET request."""
         global DATA
-        if self.client_address[0] in self.wacl and self.client_address[0] not in self.bacl:
+        tmp = urlparse.urlparse(self.path)
+        auth = urlparse.parse_qs(tmp.query)
+        for key in auth.keys():
+            auth[key] = auth[key][0]
+        if cmp(self.auth, auth) == 0 and self.client_address[0] in self.wacl \
+                and self.client_address[0] not in self.bacl:
             self.send_response(200)
             self.send_header("Content-Type", "text/html;charset=GBK")
             self.send_header("Transfer-Encoding", "chunked")
@@ -54,6 +55,7 @@ class ForwardHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             run_logger.warning('%s is denied' % self.client_address[0])
 
 
+# Get Handler class
 def handleRequestsUsing(ct):
     return lambda *args: ForwardHandler(ct, *args)
 
@@ -69,6 +71,9 @@ class ConfigThread(threading.Thread):
             # Server config
             self.host = self._config.get('Server', 'HOST')
             self.port = int(self._config.get('Server', 'PORT'))
+            self.auth = dict()
+            self.auth['username'] = self._config.get('Server', 'USERNAME')
+            self.auth['password'] = self._config.get('Server', 'PASSWORD')
 
             # REMOTE config
             self.remote_url = self._config.get('Remote', 'URL')
@@ -93,10 +98,12 @@ class ConfigThread(threading.Thread):
                 self._config.read('config.ini')
                 self.wacl = tuple(self._config.get('ACL', 'WLIST').split(','))
                 self.bacl = tuple(self._config.get('ACL', 'BLIST').split(','))
+                self.auth['username'] = self._config.get('Server', 'USERNAME')
+                self.auth['password'] = self._config.get('Server', 'PASSWORD')
             except Exception as e:
                 if DEBUG:
-                    print('Reload acl failure: %s' % e.message)
-                run_logger.error('Reload acl failure!')
+                    print('Reload configuration failure: %s' % e.message)
+                run_logger.error('Reload configuration failure!')
                 run_logger.error(e.message)
             time.sleep(10)
 
@@ -193,6 +200,3 @@ if __name__ == '__main__':
             print ('Unknown command')
     else:
         print('Usage: start/stop/restart')
-
-        # user auth
-        #auto acl
