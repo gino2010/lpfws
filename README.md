@@ -7,7 +7,7 @@ Light Python Forwarding Web Server
 
 Features
 ---------
-1. Base http sever and ThreadingMixIn, support user authentication
+1. Base on gevent pywsgi WSGIServer, support user authentication
 2. Use requests to get data
 3. Access control list: white and black, automatic reload in absolute thread
 4. Configuration in config.ini

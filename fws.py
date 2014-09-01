@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
-from SocketServer import ThreadingMixIn, BaseRequestHandler
-import BaseHTTPServer
 import ConfigParser
 import logging
 import logging.handlers
@@ -10,6 +8,7 @@ import time
 import sys
 import urlparse
 
+from gevent.pywsgi import WSGIServer
 import requests
 
 from daemon import Daemon
@@ -21,44 +20,6 @@ __author__ = 'gino'
 DATA = ''
 # Debug flag
 DEBUG = False
-
-
-# Multithreading
-class ThreadedHTTPServer(ThreadingMixIn, BaseHTTPServer.HTTPServer):
-    pass
-
-
-# Forward Handler
-class ForwardHandler(BaseHTTPServer.BaseHTTPRequestHandler):
-    def __init__(self, ct, *args):
-        self.wacl = ct.wacl
-        self.bacl = ct.bacl
-        self.auth = ct.auth
-        BaseRequestHandler.__init__(self, *args)
-
-    def do_GET(self):
-        """Respond to a GET request."""
-        global DATA
-        # parse parameters from GET request
-        tmp = urlparse.urlparse(self.path)
-        auth = urlparse.parse_qs(tmp.query)
-        for key in auth.keys():
-            auth[key] = auth[key][0]
-        if cmp(self.auth, auth) == 0 and self.client_address[0] in self.wacl \
-                and self.client_address[0] not in self.bacl:
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html;charset=GBK")
-            self.send_header("Transfer-Encoding", "chunked")
-            self.end_headers()
-            self.wfile.write(DATA.encode('GBK'))
-            run_logger.warning('from ip: %s request' % self.client_address[0])
-        else:
-            run_logger.warning('%s is denied' % self.client_address[0])
-
-
-# Get Handler class
-def handleRequestsUsing(ct):
-    return lambda *args: ForwardHandler(ct, *args)
 
 
 # initial server config parameter
@@ -127,8 +88,9 @@ class RequestThread(threading.Thread):
             try:
                 req = requests.get(self._remote_url, params=self._lp, timeout=0.3)
                 DATA = req.text
+                run_logger.info('get data from boce server')
             except Exception:
-                logging.warning('request timeout')
+                run_logger.warning('request timeout')
             if DEBUG:
                 print(time.asctime())
             time.sleep(self._remote_sec)
@@ -138,34 +100,58 @@ class RequestThread(threading.Thread):
 
 
 class ServerDaemon(Daemon):
+    def __init__(self, pid):
+        Daemon.__init__(self, pid)
+        self._ct = ConfigThread()
+        self._rt = RequestThread(self._ct)
+
+    def data(self, environ, start_response):
+        global DATA
+        # parse parameters from GET request
+        auth = urlparse.parse_qs(environ['QUERY_STRING'])
+        for key in auth.keys():
+            auth[key] = auth[key][0]
+
+        if cmp(self._ct.auth, auth) == 0 and environ['REMOTE_ADDR'] in self._ct.wacl \
+                and environ['REMOTE_ADDR'] not in self._ct.bacl:
+            status = '200 OK'
+            body = DATA.encode('GBK')
+            headers = [
+                ('Content-Type', 'text/html;charset=GBK'),
+                ('Server:', 'Light Forwarding Server/1.0 beta')
+                # ('Content-Length', str(len(body)))
+            ]
+
+            start_response(status, headers)
+            run_logger.warning('from ip: %s request' % environ['REMOTE_ADDR'])
+            return [body]
+            # return iter([body])
+        else:
+            run_logger.warning('%s is denied' % environ['REMOTE_ADDR'])
+            start_response('404 Not Found', [('Content-Type', 'text/html')])
+            return []
+
     def run(self):
-        # Do stuff
         # initialize server configuration
-        # init_config()
-        ct = ConfigThread()
-        ct.start()
+        self._ct.start()
         run_logger.info('initial config success')
 
         # start to request remote server for getting forwarding data
-        rt = RequestThread(ct)
-        rt.start()
+        self._rt.start()
 
         # Start http server
-        ForwardHandler.server_version = 'Light Forwarding Server/1.0'
-        ForwardHandler.sys_version = ''
-        fh = handleRequestsUsing(ct)
-        httpd = ThreadedHTTPServer((ct.host, ct.port), fh)
-        run_logger.info("Server Starts - %s:%s" % (ct.host, ct.port))
+        httpd = WSGIServer((self._ct.host, self._ct.port), self.data)
         try:
             httpd.serve_forever()
+            run_logger.info("Server Started - %s:%s" % (self._ct.host, self._ct.port))
         except KeyboardInterrupt:
             pass
 
         # Stop http server only in debug mode
-        httpd.server_close()
-        rt.stop()
-        ct.stop()
-        run_logger.info("Server Stops - %s:%s" % (ct.host, ct.host))
+        httpd.stop()
+        self._rt.stop()
+        self._ct.stop()
+        run_logger.info("Server Stopped - %s:%s" % (self._ct.host, self._ct.host))
 
 
 if __name__ == '__main__':
@@ -177,7 +163,7 @@ if __name__ == '__main__':
     DEBUG = bool(oc.get('Server', 'DEBUG') == '1')
 
     # configure logging, handler request package logging
-    run_logger = logging.getLogger("requests.packages.urllib3")
+    run_logger = logging.getLogger("my.server.forward")
     run_logger.setLevel(logging.INFO)
 
     # rotate file every midnight
