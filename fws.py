@@ -80,6 +80,7 @@ class RequestThread(threading.Thread):
         self._remote_url = ct.remote_url
         self._lp = ct.lp
         self._remote_sec = ct.remote_sec
+        self._remote_url = ct.remote_url
         self._stop_flag = False
 
     def run(self):
@@ -87,10 +88,10 @@ class RequestThread(threading.Thread):
         while not self._stop_flag:
             try:
                 req = requests.get(self._remote_url, params=self._lp, timeout=0.3)
-                DATA = req.text
-                run_logger.info('get data from boce server')
+                DATA = req.text.encode('GBK')
+                run_logger.info('Request boce server: %s' % self._remote_url[0:10])
             except Exception:
-                run_logger.warning('request timeout')
+                run_logger.warning('Request timeout')
             if DEBUG:
                 print(time.asctime())
             time.sleep(self._remote_sec)
@@ -112,20 +113,17 @@ class ServerDaemon(Daemon):
         for key in auth.keys():
             auth[key] = auth[key][0]
 
-        if cmp(self._ct.auth, auth) == 0 and environ['REMOTE_ADDR'] in self._ct.wacl \
-                and environ['REMOTE_ADDR'] not in self._ct.bacl:
+        # and environ['REMOTE_ADDR'] in self._ct.wacl
+        if cmp(self._ct.auth, auth) == 0 and environ['REMOTE_ADDR'] not in self._ct.bacl:
             status = '200 OK'
-            body = DATA.encode('GBK')
             headers = [
                 ('Content-Type', 'text/html;charset=GBK'),
                 ('Server:', 'Light Forwarding Server/1.0 beta')
-                # ('Content-Length', str(len(body)))
             ]
 
             start_response(status, headers)
             run_logger.warning('from ip: %s request' % environ['REMOTE_ADDR'])
-            return [body]
-            # return iter([body])
+            return [DATA]
         else:
             run_logger.warning('%s is denied' % environ['REMOTE_ADDR'])
             start_response('404 Not Found', [('Content-Type', 'text/html')])
@@ -187,3 +185,7 @@ if __name__ == '__main__':
             print ('Unknown command')
     else:
         print('Usage: start/stop/restart')
+
+        # perfect ACL function
+        # request session
+        # concurrent control
