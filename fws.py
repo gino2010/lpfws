@@ -118,7 +118,7 @@ class ServerDaemon(Daemon):
             status = '200 OK'
             headers = [
                 ('Content-Type', 'text/html;charset=GBK'),
-                ('Server:', 'Light Forwarding Server/1.0 beta')
+                ('Server:', 'Light Forwarding Server/1.0.1')
             ]
 
             start_response(status, headers)
@@ -157,11 +157,12 @@ if __name__ == '__main__':
     oc = ConfigParser.ConfigParser()
     oc.read('config.ini')
     LOG = oc.get('LOG', 'PATH')
+    NAME = oc.get('LOG', 'NAME')
     PID = oc.get('PID', 'PATH')
     DEBUG = bool(oc.get('Server', 'DEBUG') == '1')
 
     # configure logging, handler request package logging
-    run_logger = logging.getLogger("my.server.forward")
+    run_logger = logging.getLogger(NAME)
     run_logger.setLevel(logging.INFO)
 
     # rotate file every midnight
