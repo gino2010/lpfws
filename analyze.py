@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
-#version 1.1
+#version 1.2
 import glob
 import sqlite3
 import re
@@ -52,7 +52,7 @@ def data_into_base(log_file):
                     try:
                         c = conn.cursor()
                         c.execute("INSERT INTO logdata (ip, dt) VALUES (?, ?)", (
-                                  re.findall(r'[0-9]+(?:\.[0-9]+){3}', line)[0], line[0:19]))
+                                  re.findall(r'[0-9]+(?:\.[0-9]+){3}', line)[0], line[0:23]))
                         linecount += 1
                     except sqlite3.OperationalError as e:
                         print(e.message)
@@ -67,7 +67,7 @@ def data_into_base(log_file):
 def report(db_file):
     conn = sqlite3.connect(db_file)
     c = conn.cursor()
-    c.execute("SELECT dt, count(*) AS num FROM logdata GROUP BY dt ORDER BY num DESC LIMIT 5")
+    c.execute("SELECT substr(dt, 0,20) as dts, count(*) AS num FROM logdata GROUP BY dts ORDER BY num DESC LIMIT 5")
     print("----Report----")
     print("Concurrent Requests Top 5 by Second:")
     id = 0
@@ -93,7 +93,7 @@ def detail(db_file, dt_list):
         if dt.isdigit() and int(dt) < len(dt_list):
             conn = sqlite3.connect(db_file)
             c = conn.cursor()
-            c.execute("SELECT * FROM logdata WHERE dt = ?", (dt_list[int(dt)],))
+            c.execute("SELECT * FROM logdata WHERE substr(dt, 0,20) = ?", (dt_list[int(dt)],))
             print("\nDetail for one concurrent")
             for row in c:
                 print("Datetime:{} IP:{}".format(row[1], row[0]))
