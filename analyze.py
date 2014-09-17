@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
-#version 1.0
+#version 1.1
 import glob
 import sqlite3
 import re
@@ -70,17 +70,36 @@ def report(db_file):
     c.execute("SELECT dt, count(*) AS num FROM logdata GROUP BY dt ORDER BY num DESC LIMIT 5")
     print("----Report----")
     print("Concurrent Requests Top 5 by Second:")
+    id = 0
+    dt_list = []
     for row in c:
-        print("Datetime:{} Count:{}".format(row[0], row[1]))
-
-    print("")
+        print("{}.Datetime:{} Count:{}".format(id, row[0], row[1]))
+        id += 1
+        dt_list.append(row[0])
 
     c.execute("SELECT ip, count(*) AS num FROM logdata GROUP BY ip ORDER BY num DESC")
-    print("List IP of Request and Request Count:")
+    print("\nList IP of Request and Request Count:")
     for row in c:
         print("IP:{} Count:{}".format(row[0], row[1]))
+
+    return dt_list
+
+
+def detail(db_file, dt_list):
+    while True:
+        dt = raw_input("\nWant to expand one concurrent collection?[N]: ") or "N"
+        if dt in ['N', 'n']:
+            sys.exit()
+        if dt.isdigit() and int(dt) < len(dt_list):
+            conn = sqlite3.connect(db_file)
+            c = conn.cursor()
+            c.execute("SELECT * FROM logdata WHERE dt = ?", (dt_list[int(dt)],))
+            print("\nDetail for one concurrent")
+            for row in c:
+                print("Datetime:{} IP:{}".format(row[1], row[0]))
 
 if __name__ == '__main__':
     LOG_FILE = main()
     DB_FILE = data_into_base(LOG_FILE)
-    report(DB_FILE)
+    dt_list = report(DB_FILE)
+    detail(DB_FILE, dt_list)
